@@ -38,7 +38,7 @@ def get_proxy_list_size(proxylistq):
     return proxylistq.qsize()
 
 
-def testproxy(url, _timeout, proxylistq, lock, goodproxies, badproxies):
+def testproxy(url, url_timeout, proxylistq, lock, goodproxies, badproxies):
     """ Attempt to establish a connection to a passed in URL through a proxy.
 
     This function is used in a daemon thread and will loop continuously while waiting for available
@@ -68,7 +68,7 @@ def testproxy(url, _timeout, proxylistq, lock, goodproxies, badproxies):
 
         try:
             # attempt to establish a connection
-            urllib.request.urlopen(request, timeout=float(_timeout))
+            urllib.request.urlopen(request, timeout=float(url_timeout))
 
             # if all went well save the good proxy to the list
             with lock:
@@ -99,7 +99,7 @@ def main(argv):
     proxylistq = queue.Queue()  # Hold a list of proxy ip:ports
     lock = threading.Lock()  # locks goodproxies, badproxies lists
     goodproxies = []    # proxies that passed connectivity tests
-    badproxies = []    # list of proxies that failed connectivity tests
+    badproxies = []    # proxies that failed connectivity tests
 
     # Process input parameters
     parser = argparse.ArgumentParser(description='Proxy Checker')
@@ -135,7 +135,7 @@ def main(argv):
     # load a list of proxies from the proxy file
     with open(args.file) as proxyfile:
         for line in proxyfile:
-            proxylistq.put(line)
+            proxylistq.put(line.strip())
 
     # block main thread until the proxy list queue becomes empty
     proxylistq.join()
