@@ -20,7 +20,7 @@ Parameters:
 Functions:
 
     get_proxy_list_size  -- returns the current size of the Queue holding a list of proxies
-    testproxy            -- does the actual connecting to the URL via a proxy
+    test_proxy            -- does the actual connecting to the URL via a proxy
     main                 -- loads the proxy file, creates daemon threads, write results to a file
 """
 import argparse
@@ -32,20 +32,20 @@ import time
 import urllib.request
 
 
-def get_proxy_list_size(proxylistq):
+def get_proxy_list_size(proxy_list):
     """ Return the current Queue size holding a list of proxy ip:ports """
 
-    return proxylistq.qsize()
+    return proxy_list.qsize()
 
 
-def testproxy(url, url_timeout, proxylistq, lock, goodproxies, badproxies):
+def test_proxy(url, url_timeout, proxy_list, lock, good_proxies, bad_proxies):
     """ Attempt to establish a connection to a passed in URL through a proxy.
 
     This function is used in a daemon thread and will loop continuously while waiting for available
-    proxies in the proxylistq. Once proxylistq contains a proxy, this function will extract
+    proxies in the proxy_list. Once proxy_list contains a proxy, this function will extract
     that proxy. This action automatically lock the queue until this thread is done with it.
     Builds a urllib.request opener and configures it with the proxy. Attempts to open the URL and
-    if successsful then saves the good proxy into the goodproxies list. If an exception is thrown,
+    if successsful then saves the good proxy into the good_proxies list. If an exception is thrown,
     writes the bad proxy to a bodproxies list. The call to task_done() at the end unlocks the queue
     for further processing.
 
@@ -55,7 +55,7 @@ def testproxy(url, url_timeout, proxylistq, lock, goodproxies, badproxies):
 
         # take an item from the proxy list queue; get() auto locks the
         # queue for use by this thread
-        proxyip = proxylistq.get()
+        proxyip = proxy_list.get()
 
         # configure urllib.request to use proxy
         proxy = urllib.request.ProxyHandler({'http': proxyip})
@@ -72,17 +72,17 @@ def testproxy(url, url_timeout, proxylistq, lock, goodproxies, badproxies):
 
             # if all went well save the good proxy to the list
             with lock:
-                goodproxies.append(proxyip)
+                good_proxies.append(proxyip)
 
         except (urllib.request.URLError, urllib.request.HTTPError, socket.error):
 
             # handle any error related to connectivity (timeouts, refused
             # connections, HTTPError, URLError, etc)
             with lock:
-                badproxies.append(proxyip)
+                bad_proxies.append(proxyip)
 
         finally:
-            proxylistq.task_done()  # release the queue
+            proxy_list.task_done()  # release the queue
 
 
 def main(argv):
@@ -96,10 +96,10 @@ def main(argv):
 
     """
 
-    proxylistq = queue.Queue()  # Hold a list of proxy ip:ports
-    lock = threading.Lock()  # locks goodproxies, badproxies lists
-    goodproxies = []    # proxies that passed connectivity tests
-    badproxies = []    # proxies that failed connectivity tests
+    proxy_list = queue.Queue()  # Hold a list of proxy ip:ports
+    lock = threading.Lock()  # locks good_proxies, bad_proxies lists
+    good_proxies = []    # proxies that passed connectivity tests
+    bad_proxies = []    # proxies that failed connectivity tests
 
     # Process input parameters
     parser = argparse.ArgumentParser(description='Proxy Checker')
@@ -119,14 +119,14 @@ def main(argv):
     # setup daemons ^._.^
     for _ in range(args.threads):
         worker = threading.Thread(
-            target=testproxy,
+            target=test_proxy,
             args=(
                 args.url,
                 args.timeout,
-                proxylistq,
+                proxy_list,
                 lock,
-                goodproxies,
-                badproxies))
+                good_proxies,
+                bad_proxies))
         worker.setDaemon(True)
         worker.start()
 
@@ -135,14 +135,14 @@ def main(argv):
     # load a list of proxies from the proxy file
     with open(args.file) as proxyfile:
         for line in proxyfile:
-            proxylistq.put(line.strip())
+            proxy_list.put(line.strip())
 
     # block main thread until the proxy list queue becomes empty
-    proxylistq.join()
+    proxy_list.join()
 
     # save results to file
     with open("result.txt", 'w') as resultfile:
-        resultfile.write('\n'.join(goodproxies))
+        resultfile.write('\n'.join(good_proxies))
 
     # some metrics
     print("Runtime: {0:.2f}s".format(time.time() - start))
