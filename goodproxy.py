@@ -55,10 +55,10 @@ def test_proxy(url, url_timeout, proxy_list, lock, good_proxies, bad_proxies):
 
         # take an item from the proxy list queue; get() auto locks the
         # queue for use by this thread
-        proxyip = proxy_list.get()
+        proxy_ip = proxy_list.get()
 
         # configure urllib.request to use proxy
-        proxy = urllib.request.ProxyHandler({'http': proxyip})
+        proxy = urllib.request.ProxyHandler({'http': proxy_ip})
         opener = urllib.request.build_opener(proxy)
         urllib.request.install_opener(opener)
 
@@ -72,14 +72,14 @@ def test_proxy(url, url_timeout, proxy_list, lock, good_proxies, bad_proxies):
 
             # if all went well save the good proxy to the list
             with lock:
-                good_proxies.append(proxyip)
+                good_proxies.append(proxy_ip)
 
         except (urllib.request.URLError, urllib.request.HTTPError, socket.error):
 
             # handle any error related to connectivity (timeouts, refused
             # connections, HTTPError, URLError, etc)
             with lock:
-                bad_proxies.append(proxyip)
+                bad_proxies.append(proxy_ip)
 
         finally:
             proxy_list.task_done()  # release the queue
@@ -141,8 +141,8 @@ def main(argv):
     proxy_list.join()
 
     # save results to file
-    with open("result.txt", 'w') as resultfile:
-        resultfile.write('\n'.join(good_proxies))
+    with open("result.txt", 'w') as result_file:
+        result_file.write('\n'.join(good_proxies))
 
     # some metrics
     print("Runtime: {0:.2f}s".format(time.time() - start))
