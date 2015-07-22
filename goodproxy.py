@@ -1,141 +1,151 @@
-import urllib.request
+""" A multithreaded proxy checker
+
+Given a file containing proxies, per line, in the form of ip:port, will attempt
+to establish a connection through each proxy to a provided URL. Duration of connection
+attempts is governed by a passed in timeout value. Additionally, spins off a number
+of daemon threads to speed up processing using a passed in threads parameter. Proxies
+that passed the test are written out to a file called results.txt
+
+Usage:
+
+    goodproxy.py [-h] -file FILE -url URL [-timeout TIMEOUT] [-threads THREADS]
+    
+Parameters:
+
+    -file    -- filename containing a list of ip:port per line
+    -url     -- URL to test connections against
+    -timeout -- how long to attempt connecting before marking that proxy as bad (default 1.0)
+    -threads -- number of threads to spin off to speed up processing (default 16)
+
+Functions:
+
+    get_proxy_list_size  -- returns the current size of the Queue holding a list of proxies
+    testproxy            -- does the actual connecting to the URL via a proxy
+    main                 -- loads the proxy file, creates daemon threads, write results to a file
+"""
+import argparse
+import queue
+import socket
 import sys
-import getopt
-
-proxylist = ""
-
-
-def getProxy():
-    return proxylist[0]
-
-def delProxyFromList(proxy):
-    proxylist.remove(proxy)
-    return getProxyListSize()
-
-def getProxyListSize():
-    return len(proxylist)
-
-def printUsage():
-    print("Usage: goodproxy.py -f <proxyfile> -u <url> -t <timeout>")
-     
-    
-def testproxy(url, _timeout):
+import threading
+import time
+import urllib.request
 
 
-    try:
-                
-        ip  = getProxy()
-                
-        # CONFIGURE URLLIB TO USE PROXY     
-        proxy   = urllib.request.ProxyHandler({'http': ip })
-        opener  = urllib.request.build_opener(proxy)
+def get_proxy_list_size(proxylistq):
+    """ Return the current Queue size holding a list of proxy ip:ports """
+
+    return proxylistq.qsize()
+
+
+def testproxy(url, _timeout, proxylistq, lock, goodproxies, badproxies):
+    """ Attempt to establish a connection to a passed in URL through a proxy.
+
+    This function is used in a daemon thread and will loop continuously while waiting for available
+    proxies in the proxylistq. Once proxylistq contains a proxy, this function will extract
+    that proxy. This action automatically lock the queue until this thread is done with it.
+    Builds a urllib.request opener and configures it with the proxy. Attempts to open the URL and
+    if successsful then saves the good proxy into the goodproxies list. If an exception is thrown,
+    writes the bad proxy to a bodproxies list. The call to task_done() at the end unlocks the queue
+    for further processing.
+
+    """
+
+    while True:
+
+        # take an item from the proxy list queue; get() auto locks the
+        # queue for use by this thread
+        proxyip = proxylistq.get()
+
+        # configure urllib.request to use proxy
+        proxy = urllib.request.ProxyHandler({'http': proxyip})
+        opener = urllib.request.build_opener(proxy)
         urllib.request.install_opener(opener)
-                      
-        request = urllib.request.Request(url, headers = { 'User-Agent' : 'Proxy Tester' })
 
-        # ATTEMPT TO FETCH URL
-        result = urllib.request.urlopen(request, timeout=float(_timeout)).read().decode("utf-8")
-         
-        if "<html" in result:       
-            print(result)
-            sys.exit(1)
-                        
-        # IF ALL WENT WELL THEN SAVE THIS PROXY 
-        with open("result.txt",'a') as outfile:
-            print(ip,file=outfile)
+        # some sites block frequent querying from generic headers
+        request = urllib.request.Request(
+            url, headers={'User-Agent': 'Proxy Tester'})
 
-        # THIS PROXY WAS TESTED SUCCESSFULLY SO REMOVE FROM LIST
-        print("Proxy List Now: {0}".format(delProxyFromList(ip)))
-    
-    except urllib.request.URLError as e:
-    # THIS PROXY WAS TESTED AND FAILED SO REMOVE FROM LIST
-        print(e)
-        print("----- Bad Proxy: " + ip + " Proxy List Now: {0}".format(delProxyFromList(ip)))
-        
-        
-    except urllib.request.HTTPError as e:
-        print(e)
-        # THIS PROXY WAS TESTED AND FAILED SO REMOVE FROM LIST
-        print("----- Bad Proxy: " + ip + " Proxy List Now: {0}".format(delProxyFromList(ip)))
-        
-    except:
-        # THIS PROXY WAS TESTED AND FAILED SO REMOVE FROM LIST
-        print(sys.exc_info()[0])
-        print("----- Bad Proxy: " + ip + " Proxy List Now: {0}".format(delProxyFromList(ip)))
-        
+        try:
+            # attempt to establish a connection
+            urllib.request.urlopen(request, timeout=float(_timeout))
+
+            # if all went well save the good proxy to the list
+            with lock:
+                goodproxies.append(proxyip)
+
+        except (urllib.request.URLError, urllib.request.HTTPError, socket.error):
+
+            # handle any error related to connectivity (timeouts, refused
+            # connections, HTTPError, URLError, etc)
+            with lock:
+                badproxies.append(proxyip)
+
+        finally:
+            proxylistq.task_done()  # release the queue
 
 
-def main(argv):    
-    
-    filename    = ""
-    url         = ""
-    timeout     = None
-    
-    try:
-        
-        # USE GETOPS FOR EASIER PARAMETER PROCESSING
-        opts, args = getopt.getopt(argv, "f:u:t:",["file=", "url=", "timeout="])
-    
-    except getopt.GetoptError:
-        
-        printUsage()
-        sys.exit(2)
-        
-    
-    # CHECK FOR MISSING PARAMETERS
-    # THE 'OPTS' OBJECT CONSISTS OF A LIST OF TUPLES LIKE (PARAM,VAL)
-    # LIST COMPREHENSION COLLECTS FIRST ELEMENTS FROM EACH TUPLE INTO A NEW LIST 
-    # THEN TESTS THE NEW LIST FOR THE REQUIRED PARAMS 
-    if not any(f in [opt[0] for opt in opts] for f in ['-f','--file']):
-        printUsage()
-        print("Error: -f parameter missing")
-        sys.exit(2)
-         
-    if not any(u in [opt[0] for opt in opts] for u in ['-u','--url']):
-        printUsage()
-        print("Error: -u parameter missing")
-        sys.exit(2)
+def main(argv):
+    """ Main Function
 
-    if not any(t in [opt[0] for opt in opts] for t in ['-t','--timeout']):
-        printUsage()
-        print("Error: -t parameter missing")
-        sys.exit(2)
-        
-    
-    # CONFIGURE SETTINGS BASED ON THE PASSED IN PARAMETERS
-    for opt, arg in opts:
-        
-        if opt in ('-f', '--file'):
-            
-            print("Using proxies in: " + arg)
-            filename = arg
-            
-        elif opt in ('-u', '--url'):
-            
-            print("Using URL: " + arg)
-            url = arg
-            
-        elif opt in ('-t', '--timeout'):
-            
-            print("Timeout: {0}s".format(arg))
-            timeout = arg
-        
-        
-    # LOAD LIST OR PROXIES FROM THE PROXY FILE
-    with open(filename) as f:
-        global proxylist
-        proxylist = [line.strip() for line in f]
+    Uses argparse to process input parameters. File and URL are required while the timeout
+    and thread values are optional. Uses threading to create a number of daemon threads each
+    of which monitors a Queue for available proxies to test. Once the Queue begins populating,
+    the waiting daemon threads will start picking up the proxies and testing them. Successful
+    results are written out to a results.txt file.
 
-    if not proxylist:
-        print("No proxies found for testing.")
-        sys.exit(1)
-    else:
-        print("Testing {0} proxies.".format(getProxyListSize()))
-        
-        
-    # LOOP EVERY PROXY
-    while getProxyListSize() > 0:
-        testproxy(url, timeout)
+    """
+
+    proxylistq = queue.Queue()  # Hold a list of proxy ip:ports
+    lock = threading.Lock()  # locks goodproxies, badproxies lists
+    goodproxies = []    # proxies that passed connectivity tests
+    badproxies = []    # list of proxies that failed connectivity tests
+
+    # Process input parameters
+    parser = argparse.ArgumentParser(description='Proxy Checker')
+
+    parser.add_argument(
+        '-file', help='a text file with a list of proxy:port per line', required=True)
+    parser.add_argument(
+        '-url', help='URL for connection attempts', required=True)
+    parser.add_argument(
+        '-timeout',
+        type=float, help='timeout in seconds (defaults to 1', default=1)
+    parser.add_argument(
+        '-threads', type=int, help='number of threads (defaults to 16)', default=16)
+
+    args = parser.parse_args(argv)
+
+    # setup daemons ^._.^
+    for _ in range(args.threads):
+        worker = threading.Thread(
+            target=testproxy,
+            args=(
+                args.url,
+                args.timeout,
+                proxylistq,
+                lock,
+                goodproxies,
+                badproxies))
+        worker.setDaemon(True)
+        worker.start()
+
+    start = time.time()
+
+    # load a list of proxies from the proxy file
+    with open(args.file) as proxyfile:
+        for line in proxyfile:
+            proxylistq.put(line)
+
+    # block main thread until the proxy list queue becomes empty
+    proxylistq.join()
+
+    # save results to file
+    with open("result.txt", 'w') as resultfile:
+        resultfile.write('\n'.join(goodproxies))
+
+    # some metrics
+    print("Runtime: {0:.2f}s".format(time.time() - start))
 
 
 if __name__ == "__main__":
