@@ -1,29 +1,47 @@
-""" A multithreaded proxy checker
+""" A multithreaded proxy checker and anonymity level analyzer
 
-Given a file containing proxies, per line, in the form of ip:port, will attempt
-to establish a connection through each proxy to a provided URL. Duration of connection
-attempts is governed by a passed in timeout value. Additionally, spins off a number
-of daemon threads to speed up processing using a passed in threads parameter. Proxies
-that passed the test are written out to a file called results.txt
+Given a file containing a list of proxies, in a form of ip:port, attempts
+to connect through each proxy to a local web server. If successful, the web
+server collects the headers coming out of the proxy and return them to the
+calling thread for anonymity analysis.
+
+Anonymity levels are defined as follows:
+
+    Level 1: Elite Proxy - hides source IP and that it is a proxy
+    Level 2: Anonymous Proxy - hides source IP but labels itself as a proxy
+    Level 3: Transparent Proxy - both source IP and proxy details are visible
+
+Because this program spins off a local web server to simulate a recipient of
+proxied requests - the port it runs on needs to be port-forwarded on
+your router.
 
 Usage:
 
-    goodproxy.py [-h] -file FILE -url URL [-timeout TIMEOUT] [-threads THREADS]
-    
+    goodproxy.py [-h] -wanip WANIP [-port PORT] [-file FILE]
+                [-timeout TIMEOUT] [-threads THREADS]
+
 Parameters:
 
-    -file    -- filename containing a list of ip:port per line
-    -url     -- URL to test connections against
-    -timeout -- how long to attempt connecting before marking that proxy as bad (default 1.0)
-    -threads -- number of threads to spin off to speed up processing (default 16)
+    -wanip   -- your external IP (as at whatismyip.org)
+    -port    -- for the local web server (default 80)
+    -file    -- filename with a list of proxies per line (default proxies.txt)
+    -timeout -- time in seconds for connecting to a proxy (default 1.0)
+    -threads -- number of threads to boost performance (default 8)
 
 Functions:
 
-    get_proxy_list_size  -- returns the current size of the Queue holding a list of proxies
-    test_proxy            -- does the actual connecting to the URL via a proxy
-    main                 -- loads the proxy file, creates daemon threads, write results to a file
+    test_proxy           -- does the actual connecting through a proxy
+    main                 -- creates daemon threads, writes results to a file
+
+Output:
+
+    Creates a result.csv with a comma-delimited list of proxies and
+    results like the anonymity level, time to connect and headers sent out by
+    the proxy.
 """
 import argparse
+import http.client
+import json
 import queue
 import socket
 import sys
@@ -31,121 +49,209 @@ import threading
 import time
 import urllib.request
 
-
-def get_proxy_list_size(proxy_list):
-    """ Return the current Queue size holding a list of proxy ip:ports """
-
-    return proxy_list.qsize()
+import simpleserver
 
 
-def test_proxy(url, url_timeout, proxy_list, lock, good_proxies, bad_proxies):
-    """ Attempt to establish a connection to a passed in URL through a proxy.
+def test_proxy(
+        url_timeout, proxy_list, lock, good_proxies, bad_proxies, wanip, port):
+    """ Attempt to connect through a proxy.
 
-    This function is used in a daemon thread and will loop continuously while waiting for available
-    proxies in the proxy_list. Once proxy_list contains a proxy, this function will extract
-    that proxy. This action automatically lock the queue until this thread is done with it.
-    Builds a urllib.request opener and configures it with the proxy. Attempts to open the URL and
-    if successsful then saves the good proxy into the good_proxies list. If an exception is thrown,
-    writes the bad proxy to a bodproxies list. The call to task_done() at the end unlocks the queue
-    for further processing.
+    This function is used in a daemon thread and will loop continuously while
+    waiting for available proxies in the proxy_list. Once proxy_list contains
+    a proxy, this function will extract it and the proxy_list queue will
+    automatically lock until the thread is done. A connection to the local web
+    server will then be attempted through the proxy, using a URL consisting of
+    wanip:port. Results from successfull connections will be saved into the
+    good_proxies list. Exceptions, like connect failures, are ignored
+    since we are interested in working proxies only.
 
     """
 
     while True:
 
-        # take an item from the proxy list queue; get() auto locks the
-        # queue for use by this thread
+        # take an item from the proxy list queue
+        # get() also auto locks the queue for use by this thread
         proxy_ip = proxy_list.get()
+
+        # LAN IP of this host to use for the web server and for checking
+        # proxy anonymity levels
+        my_ip = socket.gethostbyname(socket.gethostname())
 
         # configure urllib.request to use proxy
         proxy = urllib.request.ProxyHandler({'http': proxy_ip})
         opener = urllib.request.build_opener(proxy)
         urllib.request.install_opener(opener)
 
-        # some sites block frequent querying from generic headers
+        # some sites block frequent querying from programmatic methods so
+        # set a header to simulate a browser
         request = urllib.request.Request(
-            url, headers={'User-Agent': 'Proxy Tester'})
+            "http://{0}:{1}".format(wanip, port),
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64)' +
+                     'AppleWebKit/537.36 (KHTML, like Gecko)' +
+                     'Chrome/43.0.2357.134 Safari/537.36'})
 
         try:
+
+            start = time.time()
+
             # attempt to establish a connection
-            urllib.request.urlopen(request, timeout=float(url_timeout))
+            response = urllib.request.urlopen(
+                request,
+                timeout=float(url_timeout)).read().decode("utf-8")
 
-            # if all went well save the good proxy to the list
+            # the response from the local web server will come in json format
+            # and will contain the headers it received from the proxy
+            headers_json = json.loads(response)
+
+            # parse out the keys and values for easier comparison
+            header_keys = set([item[0] for item in headers_json])
+            header_values = [item[1] for item in headers_json]
+
+            # these values are often in proxies that mark themselves as such
+            # and are therefore labeled Anonymous at minimum
+            anon_types = set(['Proxy-Connection',
+                              'Via',
+                              'HTTP_VIA',
+                              'X-Via',
+                              'X-Forwarded-For',
+                              'HTTP_FORWARDED_FOR',
+                              'Forwarded',
+                              'Cdn-Src-Ip',
+                              'X-IMForwards'])
+
+            # analyze headers to decide which level of anonymity this proxy
+            # exhibits. Transparent proxies show the source IP and may contain
+            # the X-Forwarded-For header. Anonymous proxies don't send out the
+            # source IP by advertize themselves as being proxies. Anything else
+            # can be classified as an Elite proxy that shows neither the info
+            # about the source or that it is a proxy.
+            proxy_type = ""
+
+            if my_ip in header_values or 'X-Forwarded-For' in header_keys:
+                proxy_type = "Transparent"
+            elif len(header_keys.intersection(anon_types)) > 0:
+                proxy_type = "Anonymous"
+            else:
+                proxy_type = "Elite"
+
+            print(
+                "{0: <21} {1: <12} {2:>3.1f}s  {3}".format(proxy_ip,
+                                                           proxy_type,
+                                                           time.time() - start,
+                                                           ';'.join(
+                                                               header_keys)))
+
+            # save the proxy and analysis results to a list
+            # threading.Lock() is used to prevent multiple threads from
+            # corrupting this list as its a shared resource
             with lock:
-                good_proxies.append(proxy_ip)
 
-        except (urllib.request.URLError, urllib.request.HTTPError, socket.error):
+                good_proxies.append(
+                    "{0},{1},{2:.1f},{3}".format(
+                        proxy_ip,
+                        proxy_type,
+                        time.time() -
+                        start,
+                        ';'.join(header_keys)))
 
-            # handle any error related to connectivity (timeouts, refused
-            # connections, HTTPError, URLError, etc)
-            with lock:
-                bad_proxies.append(proxy_ip)
+        except queue.Empty:
+            pass
+
+        except (urllib.request.URLError,
+                urllib.request.HTTPError,
+                socket.error, http.client.HTTPException) as e:
+
+            # ignore the usual errors related to bad proxies like connectivity
+            # timeouts, refused connections, HTTPError, URLError, etc
+            pass
+
+        except:
+
+            # report serious errors that prevent further processing
+            print(format(sys.exc_info()[0]))
+            sys.exit(1)
 
         finally:
-            proxy_list.task_done()  # release the queue
+
+            # release the queue containing a list of proxies to test
+            # this prevents multiple threads from re-testing same proxies
+            proxy_list.task_done()
 
 
 def main(argv):
     """ Main Function
 
-    Uses argparse to process input parameters. File and URL are required while the timeout
-    and thread values are optional. Uses threading to create a number of daemon threads each
-    of which monitors a Queue for available proxies to test. Once the Queue begins populating,
-    the waiting daemon threads will start picking up the proxies and testing them. Successful
-    results are written out to a results.txt file.
+    Loads proxies from a file and spins of a simple web server in a sub-thread.
+    Then creates a number of daemon threads which monitor a queue for available
+    proxies to test. Once completed, successful results are written out to a
+    results.csv file.
 
     """
 
     proxy_list = queue.Queue()  # Hold a list of proxy ip:ports
     lock = threading.Lock()  # locks good_proxies, bad_proxies lists
-    good_proxies = []    # proxies that passed connectivity tests
-    bad_proxies = []    # proxies that failed connectivity tests
+    good_proxies = []  # proxies that passed connectivity tests
+    bad_proxies = []  # proxies that failed connectivity tests
 
     # Process input parameters
-    parser = argparse.ArgumentParser(description='Proxy Checker')
-
+    parser = argparse.ArgumentParser(
+        description='A multithreaded proxy checker and anonymity analyzer.')
     parser.add_argument(
-        '-file', help='a text file with a list of proxy:port per line', required=True)
+        '-wanip', help='your external IP (whatismyip.org)', required=True)
     parser.add_argument(
-        '-url', help='URL for connection attempts', required=True)
+        '-port', help='port for the local web server (default 80)',
+        default=80, type=int)
+    parser.add_argument(
+        '-file', help='a file with a list of proxies (default proxies.txt)',
+        default="proxies.txt")
     parser.add_argument(
         '-timeout',
-        type=float, help='timeout in seconds (defaults to 1', default=1)
+        type=float, help='timeout in seconds (default 1.0)', default=1.0)
     parser.add_argument(
-        '-threads', type=int, help='number of threads (defaults to 16)', default=16)
+        '-threads', type=int, help='number of threads (default 8)',
+        default=8)
 
     args = parser.parse_args(argv)
-
-    # setup daemons ^._.^
-    for _ in range(args.threads):
-        worker = threading.Thread(
-            target=test_proxy,
-            args=(
-                args.url,
-                args.timeout,
-                proxy_list,
-                lock,
-                good_proxies,
-                bad_proxies))
-        worker.setDaemon(True)
-        worker.start()
-
-    start = time.time()
 
     # load a list of proxies from the proxy file
     with open(args.file) as proxyfile:
         for line in proxyfile:
             proxy_list.put(line.strip())
 
-    # block main thread until the proxy list queue becomes empty
-    proxy_list.join()
+    # start local web server
+    simpleserver.start(args.port)
+
+    # setup daemons ^._.^
+    for _ in range(args.threads):
+        worker = threading.Thread(
+            target=test_proxy,
+            args=(
+                args.timeout,
+                proxy_list,
+                lock,
+                good_proxies,
+                bad_proxies,
+                args.wanip,
+                args.port))
+        worker.setDaemon(True)
+        worker.start()
+
+    start = time.time()
+
+    try:
+        # block main thread until the proxy list queue becomes empty
+        proxy_list.join()
+
+    except KeyboardInterrupt:
+        print("Finished")
 
     # save results to file
-    with open("result.txt", 'w') as result_file:
+    with open("result.csv", 'w') as result_file:
+        result_file.write('PROXY,LEVEL,TIME,HEADERS\n')
         result_file.write('\n'.join(good_proxies))
 
     # some metrics
-    print("Runtime: {0:.2f}s".format(time.time() - start))
+    print("Finished in {0:.1f}s".format(time.time() - start))
 
 
 if __name__ == "__main__":
