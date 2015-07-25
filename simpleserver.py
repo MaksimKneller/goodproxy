@@ -8,6 +8,7 @@ headers and send them back in JSON format.
 from socketserver import ThreadingMixIn
 import http.server
 import json
+import logging
 import socket
 import threading
 
@@ -25,14 +26,21 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         """ Process the GET portion of the HTTP request """
 
-        # create a JSON object out of the incoming headers and send them
-        # to the requestor
-        hdrsjson = json.JSONEncoder().encode(self.headers.items())
-
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
-        self.wfile.write(bytes(hdrsjson, "utf-8"))
+
+        # create a JSON object out of the incoming headers and send them
+        # to the requestor
+        try:
+            hdrsjson = json.JSONEncoder().encode(sorted(self.headers.items()))
+            self.wfile.write(bytes(hdrsjson, "utf-8"))
+        except:
+            logging.DEBUG(
+                "Server JSON encoding error for {0}:{1} - {2}".format(
+                    self.client_address[0], self.client_address[1],
+                    self.headers.items()))
+
         self.wfile.write(bytes("\n", "utf-8"))
 
         return
@@ -50,6 +58,9 @@ def start(port):
     allowing the rest of the main thread to continue processing.
 
     """
+
+    # configure logging
+    logging.basicConfig(filename="server.log", level=logging.DEBUG)
 
     # the local web server MUST use the LAN IP of this host; not 'localhost'
     # or '127.0.0.1'. Because port-forwarding uses this hostname - the web
@@ -69,6 +80,7 @@ def start(port):
     return
 
 if __name__ == "__main__":
+
     start(8081)
 
     while True:

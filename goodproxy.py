@@ -42,6 +42,7 @@ Output:
 import argparse
 import http.client
 import json
+import logging
 import queue
 import socket
 import sys
@@ -71,11 +72,19 @@ def test_proxy(
 
         # take an item from the proxy list queue
         # get() also auto locks the queue for use by this thread
-        proxy_ip = proxy_list.get()
+        try:
 
-        # LAN IP of this host to use for the web server and for checking
-        # proxy anonymity levels
-        my_ip = socket.gethostbyname(socket.gethostname())
+            proxy_ip = proxy_list.get()
+
+        except queue.Empty:
+            continue
+
+        except:
+            logging.debug(
+                "Queue.get() error {0}".format(sys.exc_info()[0]))
+            continue
+
+        start = time.time()
 
         # configure urllib.request to use proxy
         proxy = urllib.request.ProxyHandler({'http': proxy_ip})
@@ -90,92 +99,92 @@ def test_proxy(
                      'AppleWebKit/537.36 (KHTML, like Gecko)' +
                      'Chrome/43.0.2357.134 Safari/537.36'})
 
+        # attempt to establish a connection
         try:
 
-            start = time.time()
-
-            # attempt to establish a connection
             response = urllib.request.urlopen(
                 request,
                 timeout=float(url_timeout)).read().decode("utf-8")
 
-            # the response from the local web server will come in json format
-            # and will contain the headers it received from the proxy
-            headers_json = json.loads(response)
-
-            # parse out the keys and values for easier comparison
-            header_keys = set([item[0] for item in headers_json])
-            header_values = [item[1] for item in headers_json]
-
-            # these values are often in proxies that mark themselves as such
-            # and are therefore labeled Anonymous at minimum
-            anon_types = set(['Proxy-Connection',
-                              'Via',
-                              'HTTP_VIA',
-                              'X-Via',
-                              'X-Forwarded-For',
-                              'HTTP_FORWARDED_FOR',
-                              'Forwarded',
-                              'Cdn-Src-Ip',
-                              'X-IMForwards'])
-
-            # analyze headers to decide which level of anonymity this proxy
-            # exhibits. Transparent proxies show the source IP and may contain
-            # the X-Forwarded-For header. Anonymous proxies don't send out the
-            # source IP by advertize themselves as being proxies. Anything else
-            # can be classified as an Elite proxy that shows neither the info
-            # about the source or that it is a proxy.
-            proxy_type = ""
-
-            if my_ip in header_values or 'X-Forwarded-For' in header_keys:
-                proxy_type = "Transparent"
-            elif len(header_keys.intersection(anon_types)) > 0:
-                proxy_type = "Anonymous"
-            else:
-                proxy_type = "Elite"
-
-            print(
-                "{0: <21} {1: <12} {2:>3.1f}s  {3}".format(proxy_ip,
-                                                           proxy_type,
-                                                           time.time() - start,
-                                                           ';'.join(
-                                                               header_keys)))
-
-            # save the proxy and analysis results to a list
-            # threading.Lock() is used to prevent multiple threads from
-            # corrupting this list as its a shared resource
-            with lock:
-
-                good_proxies.append(
-                    "{0},{1},{2:.1f},{3}".format(
-                        proxy_ip,
-                        proxy_type,
-                        time.time() -
-                        start,
-                        ';'.join(header_keys)))
-
-        except queue.Empty:
-            pass
-
         except (urllib.request.URLError,
                 urllib.request.HTTPError,
-                socket.error, http.client.HTTPException) as e:
+                socket.error, http.client.HTTPException):
 
             # ignore the usual errors related to bad proxies like connectivity
             # timeouts, refused connections, HTTPError, URLError, etc
-            pass
+            continue
 
         except:
 
-            # report serious errors that prevent further processing
-            print(format(sys.exc_info()[0]))
-            sys.exit(1)
+            # report serious errors
+            logging.debug(
+                "Unexpected error for {0} : {1}".format(
+                    proxy_ip,
+                    sys.exc_info()[0]))
+            continue
 
-        finally:
+        # the response from the local web server will be in JSON
+        # format and will contain the headers from the proxy
+        try:
 
-            # release the queue containing a list of proxies to test
-            # this prevents multiple threads from re-testing same proxies
-            proxy_list.task_done()
+            headers_json = json.loads(response)
+
+        except:
+
+            # if unable to parse response into JSON then skip this sproxy
+            logging.debug(
+                "JSON parsing error for {0} : {1}".format(
+                    proxy_ip,
+                    sys.exc_info()[0]))
+            continue
+
+        # parse out the keys and values for easier comparison
+        header_keys = set([item[0].upper() for item in headers_json])
+        header_values = [item[1].upper() for item in headers_json]
+
+        if(len(header_keys) != len(header_values)):
+            continue
+
+        # analyze headers to decide which level of anonymity this proxy
+        # exhibits. Transparent proxies show the source IP and may contain
+        # the X-Forwarded-For header. Anonymous proxies don't send out the
+        # source IP by advertize themselves as being proxies. Anything else
+        # can be classified as an Elite proxy that shows neither the info
+        # about the source or that it is a proxy.
+        proxy_type = ""
+
+        if wanip in header_values:
+            proxy_type = "Transparent"
+        elif bool([key for key in header_keys if "FORWARD" in key.upper()
+                   or "VIA" in key.upper()
+                   or "PROXY" in key.upper()]):
+            proxy_type = "Anonymous"
+        else:
+            proxy_type = "Elite"
+
+        print(
+            "{0: <21} {1: <12} {2:>5.1f}s  {3}".format(proxy_ip,
+                                                       proxy_type,
+                                                       time.time() -
+                                                       start,
+                                                       headers_json))
+
+        # save the proxy and analysis results to a list
+        # threading.Lock() is used to prevent multiple threads from
+        # corrupting this list as its a shared resource
+        with lock:
+
+            good_proxies.append(
+                "{0},{1},{2:.1f},{3}".format(
+                    proxy_ip,
+                    proxy_type,
+                    time.time() -
+                    start,
+                    headers_json))
+
+        # release the queue containing a list of proxies to test
+        # this prevents multiple threads from re-testing same proxies
+        proxy_list.task_done()
 
 
 def main(argv):
@@ -192,6 +201,9 @@ def main(argv):
     lock = threading.Lock()  # locks good_proxies, bad_proxies lists
     good_proxies = []  # proxies that passed connectivity tests
     bad_proxies = []  # proxies that failed connectivity tests
+
+    # configure logging
+    logging.basicConfig(filename="tester.log", level=logging.DEBUG)
 
     # Process input parameters
     parser = argparse.ArgumentParser(
