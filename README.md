@@ -1,5 +1,4 @@
-# goodproxy
-A Multithreaded Proxy Checker And Anonymity Level Analyzer
+# GoodProxy - A multithreaded proxy checker and anonymity level analyzer
 
 Given a file containing a list of proxies, in a form of ip:port, attempts
 to connect through each proxy to a local web server. If successful, the web
@@ -16,12 +15,11 @@ Because this program spins off a local web server to simulate a recipient of
 proxied requests - the port it runs on needs to be port-forwarded on
 your router.
 
-Usage:
+##Usage:
 
-    goodproxy.py [-h] -wanip WANIP [-port PORT] [-file FILE]
-                [-timeout TIMEOUT] [-threads THREADS]
+    goodproxy.py [-h] -wanip WANIP [-port PORT] [-file FILE] [-timeout TIMEOUT] [-threads THREADS]
                 
-Parameters:
+####Parameters:
 
     -wanip   -- your external IP (as at whatismyip.org)
     -port    -- for the local web server (default 80)
@@ -30,12 +28,12 @@ Parameters:
     -threads -- number of threads to boost performance (default 8)
     
     
-Functions:
+##Functions:
 
     test_proxy           -- does the actual connecting through a proxy
     main                 -- creates daemon threads, writes results to a file
     
-Output:
+##Output:
 
     Creates a result.csv with a comma-delimited list of proxies and
     results like the anonymity level, time to connect and headers sent out by
