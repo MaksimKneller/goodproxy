@@ -35,7 +35,5 @@ your router.
     
 ##Output:
 
-    Creates a result.csv with a comma-delimited list of proxies and
-    results like the anonymity level, time to connect and headers sent out by
-    the proxy.
+Creates a result.csv with a comma-delimited list of proxies and results like the anonymity level, time to connect and headers sent out by the proxy.
 
