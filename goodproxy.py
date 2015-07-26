@@ -1,4 +1,4 @@
-""" A multithreaded proxy checker and anonymity level analyzer
+""" A multithreaded proxy checker with anonymity analysis
 
 Given a file containing a list of proxies, in a form of ip:port, attempts
 to connect through each proxy to a local web server. If successful, the web
@@ -142,6 +142,9 @@ def test_proxy(
         header_keys = set([item[0].upper() for item in headers_json])
         header_values = [item[1].upper() for item in headers_json]
 
+        # sanity check: if num of header keys doesn't equal to num of header
+        # values then something was wrong with the JSON or the headers so
+        # skip the proxy
         if(len(header_keys) != len(header_values)):
             continue
 
