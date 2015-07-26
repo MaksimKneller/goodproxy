@@ -1,4 +1,4 @@
-# GoodProxy - A multithreaded proxy checker with anonymity analysis
+## GoodProxy is a multithreaded proxy checker providing three levels of anonymity analysis. 
 
 Given a file containing a list of proxies, in a form of ip:port, attempts
 to connect through each proxy to a local web server. If successful, the web
