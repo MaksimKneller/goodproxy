@@ -19,7 +19,7 @@ your router.
 
     goodproxy.py [-h] -wanip WANIP [-port PORT] [-file FILE] [-timeout TIMEOUT] [-threads THREADS]
                 
-####Parameters:
+Parameters:
 
     -wanip   -- your external IP (as at whatismyip.org)
     -port    -- for the local web server (default 80)
