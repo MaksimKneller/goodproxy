@@ -1,4 +1,4 @@
-## GoodProxy is a multithreaded proxy checker with anonymity analysis. 
+## GoodProxy is a multithreaded proxy checker with anonymity analysis. <a href="https://codeclimate.com/github/MaksimKneller/goodproxy"><img src="https://codeclimate.com/github/MaksimKneller/goodproxy/badges/gpa.svg" /></a>
 
 Given a file containing a list of proxies, in a form of ip:port, attempts
 to connect through each proxy to a local web server. If successful, the web
