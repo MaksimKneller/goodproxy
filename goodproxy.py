@@ -52,6 +52,44 @@ import urllib.request
 
 import simpleserver
 
+""" Utility Functions """
+
+
+def loadProxyList(args, proxy_list):
+    """ load a list of proxies from the proxy file """
+    with open(args.file) as proxyfile:
+        for line in proxyfile:
+            proxy_list.put(line.strip())
+
+
+def saveResults(good_proxies):
+    """ save results to file """
+    with open("result.csv", 'w') as result_file:
+        result_file.write('PROXY,LEVEL,TIME,HEADERS\n')
+        result_file.write('\n'.join(good_proxies))
+
+
+def processInputParameters(argv):
+    """ Process input parameters """
+    parser = argparse.ArgumentParser(
+        description='A multithreaded proxy checker and anonymity analyzer.')
+    parser.add_argument(
+        '-wanip', help='your external IP (whatismyip.org)', required=True)
+    parser.add_argument(
+        '-port', help='port for the local web server (default 80)',
+        default=80, type=int)
+    parser.add_argument(
+        '-file', help='a file with a list of proxies (default proxies.txt)',
+        default="proxies.txt")
+    parser.add_argument(
+        '-timeout',
+        type=float, help='timeout in seconds (default 1.0)', default=1.0)
+    parser.add_argument(
+        '-threads', type=int, help='number of threads (default 8)',
+        default=8)
+
+    return parser.parse_args(argv)
+
 
 def test_proxy(
         url_timeout, proxy_list, lock, good_proxies, bad_proxies, wanip, port):
@@ -208,30 +246,11 @@ def main(argv):
     # configure logging
     logging.basicConfig(filename="tester.log", level=logging.DEBUG)
 
-    # Process input parameters
-    parser = argparse.ArgumentParser(
-        description='A multithreaded proxy checker and anonymity analyzer.')
-    parser.add_argument(
-        '-wanip', help='your external IP (whatismyip.org)', required=True)
-    parser.add_argument(
-        '-port', help='port for the local web server (default 80)',
-        default=80, type=int)
-    parser.add_argument(
-        '-file', help='a file with a list of proxies (default proxies.txt)',
-        default="proxies.txt")
-    parser.add_argument(
-        '-timeout',
-        type=float, help='timeout in seconds (default 1.0)', default=1.0)
-    parser.add_argument(
-        '-threads', type=int, help='number of threads (default 8)',
-        default=8)
+    # parse input parameters
+    args = processInputParameters(argv)
 
-    args = parser.parse_args(argv)
-
-    # load a list of proxies from the proxy file
-    with open(args.file) as proxyfile:
-        for line in proxyfile:
-            proxy_list.put(line.strip())
+    # load in a list of proxies from a text file
+    loadProxyList(args, proxy_list)
 
     # start local web server
     simpleserver.start(args.port)
@@ -260,10 +279,7 @@ def main(argv):
     except KeyboardInterrupt:
         print("Finished")
 
-    # save results to file
-    with open("result.csv", 'w') as result_file:
-        result_file.write('PROXY,LEVEL,TIME,HEADERS\n')
-        result_file.write('\n'.join(good_proxies))
+    saveResults(good_proxies)
 
     # some metrics
     print("Finished in {0:.1f}s".format(time.time() - start))
