@@ -55,21 +55,21 @@ import simpleserver
 """ Utility Functions """
 
 
-def loadProxyList(args, proxy_list):
+def loadproxylist(args, proxy_list):
     """ load a list of proxies from the proxy file """
     with open(args.file) as proxyfile:
         for line in proxyfile:
             proxy_list.put(line.strip())
 
 
-def saveResults(good_proxies):
+def saveresults(good_proxies):
     """ save results to file """
     with open("result.csv", 'w') as result_file:
         result_file.write('PROXY,LEVEL,TIME,HEADERS\n')
         result_file.write('\n'.join(good_proxies))
 
 
-def processInputParameters(argv):
+def processinputparams(argv):
     """ Process input parameters """
     parser = argparse.ArgumentParser(
         description='A multithreaded proxy checker and anonymity analyzer.')
@@ -91,8 +91,80 @@ def processInputParameters(argv):
     return parser.parse_args(argv)
 
 
+def configureurlrequest(proxytotest, wanip, port):
+    """configure urllib.request with a proxy
+    :rtype: urllib.request.Request
+    """
+
+    proxy = urllib.request.ProxyHandler({'http': proxytotest})
+    opener = urllib.request.build_opener(proxy)
+    urllib.request.install_opener(opener)
+
+    # some sites block frequent querying from programmatic methods so
+    # set a header to simulate a browser
+    return urllib.request.Request(
+        "http://{0}:{1}".format(wanip, port),
+        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64)' +
+                               'AppleWebKit/537.36 (KHTML, like Gecko)' +
+                               'Chrome/43.0.2357.134 Safari/537.36'})
+
+
+def getresponse(request, url_timeout):
+
+    try:
+
+        return urllib.request.urlopen(
+            request,
+            timeout=float(url_timeout)).read().decode("utf-8")
+
+    except urllib.request.URLError:
+        pass
+        # if isinstance(err.reason,socket.timeout):
+        #    print("Error: Timeout")
+        # else:
+        #    print("Error: " + err.reason)
+
+    except (urllib.request.HTTPError,
+            socket.error, http.client.HTTPException):
+
+        # ignore the usual errors related to bad proxies like connectivity
+        # timeouts, refused connections, HTTPError, URLError, etc
+        # print("Error" + urllib.request.URLError + urllib.request.HTTPError + socket.error, http.client.HTTPException )
+        pass
+
+
+def analyzeheaders(headers_json, wanip, port):
+
+    # parse out the keys and values for easier comparison
+    header_keys = set([item[0].upper() for item in headers_json])
+    header_values = [item[1].upper() for item in headers_json]
+
+    # sanity check: if num of header keys doesn't equal to num of header
+    # values then something was wrong with the JSON or the headers so
+    # skip the proxy
+    if len(header_keys) != len(header_values):
+        return None
+
+    # analyze headers to decide which level of anonymity this proxy
+    # exhibits. Transparent proxies show the source IP and may contain
+    # the X-Forwarded-For header. Anonymous proxies don't send out the
+    # source IP by advertize themselves as being proxies. Anything else
+    # can be classified as an Elite proxy that shows neither the info
+    # about the source or that it is a proxy.
+    if wanip + ":" + str(port) in header_values:
+        proxy_type = "Transparent"
+    elif bool([key for key in header_keys if "FORWARD" in key.upper()
+                                             or "VIA" in key.upper()
+                                             or "PROXY" in key.upper()]):
+        proxy_type = "Anonymous"
+    else:
+        proxy_type = "Elite"
+
+    return proxy_type
+
+
 def test_proxy(
-        url_timeout, proxy_list, lock, good_proxies, bad_proxies, wanip, port):
+        url_timeout, allproxies, lock, good_proxies, wanip, port):
     """ Attempt to connect through a proxy.
 
     This function is used in a daemon thread and will loop continuously while
@@ -108,110 +180,37 @@ def test_proxy(
 
     while True:
 
-        # take an item from the proxy list queue
-        # get() also auto locks the queue for use by this thread
         try:
 
-            proxy_ip = proxy_list.get()
+            # .get() locks the Queue to be thread safe and blocks until an item is available
+            proxytotest = allproxies.get()
 
         except queue.Empty:
             continue
 
-        except:
-            logging.debug(
-                "Queue.get() error {0}".format(sys.exc_info()[0]))
-            continue
-
         start = time.time()
 
-        # configure urllib.request to use proxy
-        proxy = urllib.request.ProxyHandler({'http': proxy_ip})
-        opener = urllib.request.build_opener(proxy)
-        urllib.request.install_opener(opener)
+        request = configureurlrequest(proxytotest, wanip, port)
+        response = getresponse(request, url_timeout)
 
-        # some sites block frequent querying from programmatic methods so
-        # set a header to simulate a browser
-        request = urllib.request.Request(
-            "http://{0}:{1}".format(wanip, port),
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64)' +
-                     'AppleWebKit/537.36 (KHTML, like Gecko)' +
-                     'Chrome/43.0.2357.134 Safari/537.36'})
-
-        # attempt to establish a connection
-        try:
-
-            response = urllib.request.urlopen(
-                request,
-                timeout=float(url_timeout)).read().decode("utf-8")
-
-        except urllib.request.URLError as err:
-            continue
-            #if isinstance(err.reason,socket.timeout):
-            #    print("Error: Timeout")
-            #else:
-            #    print("Error: " + err.reason)
-
-        except (urllib.request.HTTPError,
-                socket.error, http.client.HTTPException):
-
-            # ignore the usual errors related to bad proxies like connectivity
-            # timeouts, refused connections, HTTPError, URLError, etc
-            #print("Error" + urllib.request.URLError + urllib.request.HTTPError + socket.error, http.client.HTTPException )
-            continue
-
-        except:
-
-            # report serious errors
-            logging.debug(
-                "Unexpected error for {0} : {1}".format(
-                    proxy_ip,
-                    sys.exc_info()[0]))
-            continue
-
-        # the response from the local web server will be in JSON
-        # format and will contain the headers from the proxy
+        # format JSON response to get all headers from the proxy
         try:
 
             headers_json = json.loads(response)
 
-        except:
+        except json.JSONDecodeError:
 
             # if unable to parse response into JSON then skip this sproxy
-
             logging.debug(
                 "JSON parsing error for {0} : {1}".format(
-                    proxy_ip,
+                    proxytotest,
                     sys.exc_info()[0]))
             continue
 
-        # parse out the keys and values for easier comparison
-        header_keys = set([item[0].upper() for item in headers_json])
-        header_values = [item[1].upper() for item in headers_json]
-
-        # sanity check: if num of header keys doesn't equal to num of header
-        # values then something was wrong with the JSON or the headers so
-        # skip the proxy
-        if(len(header_keys) != len(header_values)):
-            continue
-
-        # analyze headers to decide which level of anonymity this proxy
-        # exhibits. Transparent proxies show the source IP and may contain
-        # the X-Forwarded-For header. Anonymous proxies don't send out the
-        # source IP by advertize themselves as being proxies. Anything else
-        # can be classified as an Elite proxy that shows neither the info
-        # about the source or that it is a proxy.
-        proxy_type = ""
-        if wanip + ":" + str(port) in header_values:
-            proxy_type = "Transparent"
-        elif bool([key for key in header_keys if "FORWARD" in key.upper()
-                   or "VIA" in key.upper()
-                   or "PROXY" in key.upper()]):
-            proxy_type = "Anonymous"
-        else:
-            proxy_type = "Elite"
+        proxy_type = analyzeheaders(headers_json, wanip, port)
 
         print(
-            "{0: <21} {1: <12} {2:>5.1f}s  {3}".format(proxy_ip,
+            "{0: <21} {1: <12} {2:>5.1f}s  {3}".format(proxytotest,
                                                        proxy_type,
                                                        time.time() -
                                                        start,
@@ -224,7 +223,7 @@ def test_proxy(
 
             good_proxies.append(
                 "{0},{1},{2:.1f},{3}".format(
-                    proxy_ip,
+                    proxytotest,
                     proxy_type,
                     time.time() -
                     start,
@@ -232,7 +231,7 @@ def test_proxy(
 
         # release the queue containing a list of proxies to test
         # this prevents multiple threads from re-testing same proxies
-        proxy_list.task_done()
+        allproxies.task_done()
 
 
 def main(argv):
@@ -246,18 +245,17 @@ def main(argv):
     """
 
     proxy_list = queue.Queue()  # Hold a list of proxy ip:ports
-    lock = threading.Lock()  # locks good_proxies, bad_proxies lists
+    lock = threading.Lock()  # locks good_proxies list
     good_proxies = []  # proxies that passed connectivity tests
-    bad_proxies = []  # proxies that failed connectivity tests
 
     # configure logging
     logging.basicConfig(filename="tester.log", level=logging.DEBUG)
 
     # parse input parameters
-    args = processInputParameters(argv)
+    args = processinputparams(argv)
 
     # load in a list of proxies from a text file
-    loadProxyList(args, proxy_list)
+    loadproxylist(args, proxy_list)
 
     # start local web server
     simpleserver.start(args.port)
@@ -271,7 +269,6 @@ def main(argv):
                 proxy_list,
                 lock,
                 good_proxies,
-                bad_proxies,
                 args.wanip,
                 args.port))
         worker.setDaemon(True)
@@ -286,7 +283,7 @@ def main(argv):
     except KeyboardInterrupt:
         print("Finished")
 
-    saveResults(good_proxies)
+    saveresults(good_proxies)
 
     # some metrics
     print("Finished in {0:.1f}s".format(time.time() - start))
