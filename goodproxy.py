@@ -57,6 +57,7 @@ import simpleserver
 
 def loadproxylist(args, proxy_list):
     """ load a list of proxies from the proxy file """
+
     with open(args.file) as proxyfile:
         for line in proxyfile:
             proxy_list.put(line.strip())
@@ -79,11 +80,11 @@ def processinputparams(argv):
         '-port', help='port for the local web server (default 80)',
         default=80, type=int)
     parser.add_argument(
+        '-timeout', help='timeout in seconds (default 1.0)',
+        default=1, type=int)
+    parser.add_argument(
         '-file', help='a file with a list of proxies (default proxies.txt)',
         default="proxies.txt")
-    parser.add_argument(
-        '-timeout',
-        type=float, help='timeout in seconds (default 1.0)', default=1.0)
     parser.add_argument(
         '-threads', type=int, help='number of threads (default 8)',
         default=8)
@@ -133,7 +134,7 @@ def getresponse(request, url_timeout):
         pass
 
 
-def analyzeheaders(headers_json, wanip, port):
+def analyzeheaders(args, headers_json):
 
     # parse out the keys and values for easier comparison
     header_keys = set([item[0].upper() for item in headers_json])
@@ -151,7 +152,7 @@ def analyzeheaders(headers_json, wanip, port):
     # source IP by advertize themselves as being proxies. Anything else
     # can be classified as an Elite proxy that shows neither the info
     # about the source or that it is a proxy.
-    if wanip + ":" + str(port) in header_values:
+    if args.wanip + ":" + str(args.port) in header_values:
         proxy_type = "Transparent"
     elif bool([key for key in header_keys if "FORWARD" in key.upper()
                                              or "VIA" in key.upper()
@@ -163,8 +164,7 @@ def analyzeheaders(headers_json, wanip, port):
     return proxy_type
 
 
-def test_proxy(
-        url_timeout, allproxies, good_proxies, wanip, port):
+def test_proxy(args, allproxies, good_proxies):
     """ Attempt to connect through a proxy.
 
     This function is used in a daemon thread and will loop continuously while
@@ -185,8 +185,8 @@ def test_proxy(
 
         start = time.time()
 
-        request = configureurlrequest(proxytotest, wanip, port)
-        response = getresponse(request, url_timeout)
+        request = configureurlrequest(proxytotest, args.wanip, args.port)
+        response = getresponse(request, args.timeout)
 
         # format JSON response to get all headers from the proxy
         try:
@@ -196,7 +196,7 @@ def test_proxy(
         except (TypeError, json.JSONDecodeError):
             continue
 
-        proxy_type = analyzeheaders(headers_json, wanip, port)
+        proxy_type = analyzeheaders(args, headers_json)
 
         print(
             "{0: <21} {1: <12} {2:>5.1f}s  {3}".format(proxytotest,
@@ -254,11 +254,9 @@ def main(argv):
         worker = threading.Thread(
             target=test_proxy,
             args=(
-                args.timeout,
+                args,
                 proxy_list,
-                good_proxies,
-                args.wanip,
-                args.port))
+                good_proxies))
         worker.setDaemon(True)
         worker.start()
 
