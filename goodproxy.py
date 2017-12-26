@@ -164,7 +164,7 @@ def analyzeheaders(headers_json, wanip, port):
 
 
 def test_proxy(
-        url_timeout, allproxies, lock, good_proxies, wanip, port):
+        url_timeout, allproxies, good_proxies, wanip, port):
     """ Attempt to connect through a proxy.
 
     This function is used in a daemon thread and will loop continuously while
@@ -180,13 +180,8 @@ def test_proxy(
 
     while True:
 
-        try:
-
-            # .get() locks the Queue to be thread safe and blocks until an item is available
-            proxytotest = allproxies.get()
-
-        except queue.Empty:
-            continue
+        # .get() locks the Queue to be thread safe and blocks until an item is available
+        proxytotest = allproxies.get()
 
         start = time.time()
 
@@ -198,13 +193,7 @@ def test_proxy(
 
             headers_json = json.loads(response)
 
-        except json.JSONDecodeError:
-
-            # if unable to parse response into JSON then skip this sproxy
-            logging.debug(
-                "JSON parsing error for {0} : {1}".format(
-                    proxytotest,
-                    sys.exc_info()[0]))
+        except (TypeError, json.JSONDecodeError):
             continue
 
         proxy_type = analyzeheaders(headers_json, wanip, port)
@@ -219,15 +208,15 @@ def test_proxy(
         # save the proxy and analysis results to a list
         # threading.Lock() is used to prevent multiple threads from
         # corrupting this list as its a shared resource
-        with lock:
+        # with lock:
 
-            good_proxies.append(
-                "{0},{1},{2:.1f},{3}".format(
-                    proxytotest,
-                    proxy_type,
-                    time.time() -
-                    start,
-                    headers_json))
+        good_proxies.append(
+            "{0},{1},{2:.1f},{3}".format(
+                proxytotest,
+                proxy_type,
+                time.time() -
+                start,
+                headers_json))
 
         # release the queue containing a list of proxies to test
         # this prevents multiple threads from re-testing same proxies
@@ -245,7 +234,7 @@ def main(argv):
     """
 
     proxy_list = queue.Queue()  # Hold a list of proxy ip:ports
-    lock = threading.Lock()  # locks good_proxies list
+    # lock = threading.Lock()  # locks good_proxies list
     good_proxies = []  # proxies that passed connectivity tests
 
     # configure logging
@@ -267,7 +256,6 @@ def main(argv):
             args=(
                 args.timeout,
                 proxy_list,
-                lock,
                 good_proxies,
                 args.wanip,
                 args.port))
