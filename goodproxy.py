@@ -144,12 +144,19 @@ def test_proxy(
                 request,
                 timeout=float(url_timeout)).read().decode("utf-8")
 
-        except (urllib.request.URLError,
-                urllib.request.HTTPError,
+        except urllib.request.URLError as err:
+            continue
+            #if isinstance(err.reason,socket.timeout):
+            #    print("Error: Timeout")
+            #else:
+            #    print("Error: " + err.reason)
+
+        except (urllib.request.HTTPError,
                 socket.error, http.client.HTTPException):
 
             # ignore the usual errors related to bad proxies like connectivity
             # timeouts, refused connections, HTTPError, URLError, etc
+            #print("Error" + urllib.request.URLError + urllib.request.HTTPError + socket.error, http.client.HTTPException )
             continue
 
         except:
@@ -170,6 +177,7 @@ def test_proxy(
         except:
 
             # if unable to parse response into JSON then skip this sproxy
+
             logging.debug(
                 "JSON parsing error for {0} : {1}".format(
                     proxy_ip,
@@ -193,8 +201,7 @@ def test_proxy(
         # can be classified as an Elite proxy that shows neither the info
         # about the source or that it is a proxy.
         proxy_type = ""
-
-        if wanip in header_values:
+        if wanip + ":" + str(port) in header_values:
             proxy_type = "Transparent"
         elif bool([key for key in header_keys if "FORWARD" in key.upper()
                    or "VIA" in key.upper()

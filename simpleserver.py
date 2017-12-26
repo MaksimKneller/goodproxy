@@ -26,6 +26,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         """ Process the GET portion of the HTTP request """
 
+
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
@@ -35,6 +36,8 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
         try:
             hdrsjson = json.JSONEncoder().encode(sorted(self.headers.items()))
             self.wfile.write(bytes(hdrsjson, "utf-8"))
+
+
         except:
             logging.DEBUG(
                 "Server JSON encoding error for {0}:{1} - {2}".format(
@@ -47,6 +50,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         """ Suppress logging of connection events """
+
         return
 
 
