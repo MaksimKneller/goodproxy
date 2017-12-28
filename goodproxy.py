@@ -52,7 +52,7 @@ import urllib.request
 import simpleserver
 
 from collections import namedtuple
-AProxy = namedtuple('AProxy','ip_port, level, speed, headers')
+AProxy = namedtuple('AProxy', 'ip_port, level, speed, headers')
 """ Utility Functions """
 
 
@@ -70,8 +70,8 @@ def saveresults(good_proxies):
         result_file.write('PROXY,LEVEL,TIME,HEADERS\n')
         for aproxy in good_proxies:
             if aproxy.level == "Elite":
-                result_file.write(aproxy.ip_port + "," + aproxy.proxytype + "," + str(aproxy.speed) + "," + str(aproxy.headers) + '\n')
-
+                result_file.write(aproxy.ip_port + "," + aproxy.proxytype + "," + str(aproxy.speed) + ","
+                                  + str(aproxy.headers) + '\n')
 
 
 def processinputparams(argv):
@@ -158,27 +158,27 @@ def analyzeheaders(args, headers_json):
     # about the source or that it is a proxy.
     proxy_type = "Transparent"
 
-    if(args.wanip not in header_values):
+    if args.wanip not in header_values:
         proxy_type = "Anonymous"
 
-        anonIntersect = set(header_keys).intersection([
-        'X-REAL-IP',
-        'X-FORWARDED-FOR',
-        'X-PROXY-ID',
-        'VIA',
-        'FORWARDED-FOR',
-        'X-FORWARDED',
-        'HTTP-FORWARDED',
-        'CLIENT-IP',
-        'FORWARDED-FOR-IP',
-        'FORWARDED_FOR',
-        'X_FORWARDED FORWARDED',
-        'CLIENT_IP',
-        'PROXY-CONNECTION',
-        'XROXY-CONNECTION',
-        'X-IMForwards'])
+        anonintersect = set(header_keys).intersection([
+            'X-REAL-IP',
+            'X-FORWARDED-FOR',
+            'X-PROXY-ID',
+            'VIA',
+            'FORWARDED-FOR',
+            'X-FORWARDED',
+            'HTTP-FORWARDED',
+            'CLIENT-IP',
+            'FORWARDED-FOR-IP',
+            'FORWARDED_FOR',
+            'X_FORWARDED FORWARDED',
+            'CLIENT_IP',
+            'PROXY-CONNECTION',
+            'XROXY-CONNECTION',
+            'X-IMForwards'])
 
-        if(len(anonIntersect) == 0):
+        if len(anonintersect) == 0:
             proxy_type = "Elite"
 
     return proxy_type
@@ -200,7 +200,7 @@ def test_proxy(args, allproxies, good_proxies):
 
     while True:
 
-        if(allproxies.empty()):
+        if allproxies.empty():
             return
 
         # .get() locks the Queue to be thread safe and blocks until an item is available
@@ -222,13 +222,12 @@ def test_proxy(args, allproxies, good_proxies):
             proxy_type = analyzeheaders(args, headers_json)
 
             print(
-            "{0: <35} {1: <12} {2:>5.1f}s  {3}".format("Thread-" + str(threading.get_ident()) + " " + proxytotest,
-                                                       proxy_type,
-                                                       time.time() -
-                                                       start,
-                                                       headers_json))
+                "{0: <35} {1: <12} {2:>5.1f}s  {3}".format("Thread-" + str(threading.get_ident()) + " " + proxytotest,
+                    proxy_type,
+                    time.time() - start,
+                    headers_json))
 
-            good_proxies.append(AProxy(proxytotest, proxy_type, time.time()-start,headers_json))
+            good_proxies.append(AProxy(proxytotest, proxy_type, time.time()-start, headers_json))
 
         except (TypeError, json.JSONDecodeError):
             continue
