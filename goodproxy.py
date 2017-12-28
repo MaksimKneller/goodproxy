@@ -162,21 +162,9 @@ def analyzeheaders(args, headers_json):
         proxy_type = "Anonymous"
 
         anonintersect = set(header_keys).intersection([
-            'X-REAL-IP',
-            'X-FORWARDED-FOR',
-            'X-PROXY-ID',
-            'VIA',
-            'FORWARDED-FOR',
-            'X-FORWARDED',
-            'HTTP-FORWARDED',
-            'CLIENT-IP',
-            'FORWARDED-FOR-IP',
-            'FORWARDED_FOR',
-            'X_FORWARDED FORWARDED',
-            'CLIENT_IP',
-            'PROXY-CONNECTION',
-            'XROXY-CONNECTION',
-            'X-IMForwards'])
+            'X-REAL-IP', 'X-FORWARDED-FOR', 'X-PROXY-ID', 'VIA', 'FORWARDED-FOR', 'X-FORWARDED',
+            'HTTP-FORWARDED', 'CLIENT-IP', 'FORWARDED-FOR-IP', 'FORWARDED_FOR', 'X_FORWARDED FORWARDED', 'CLIENT_IP',
+            'PROXY-CONNECTION', 'XROXY-CONNECTION', 'X-IMForwards'])
 
         if len(anonintersect) == 0:
             proxy_type = "Elite"
