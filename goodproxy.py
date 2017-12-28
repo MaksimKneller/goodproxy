@@ -49,9 +49,10 @@ import sys
 import threading
 import time
 import urllib.request
-
 import simpleserver
 
+from collections import namedtuple
+AProxy = namedtuple('AProxy','ip_port, level, speed, headers')
 """ Utility Functions """
 
 
@@ -65,9 +66,12 @@ def loadproxylist(args, proxy_list):
 
 def saveresults(good_proxies):
     """ save results to file """
-    with open("result.csv", 'w') as result_file:
+    with open("elite_result.csv", 'w') as result_file:
         result_file.write('PROXY,LEVEL,TIME,HEADERS\n')
-        result_file.write('\n'.join(good_proxies))
+        for aproxy in good_proxies:
+            if aproxy.level == "Elite":
+                result_file.write(aproxy.ip_port + "," + aproxy.proxytype + "," + str(aproxy.speed) + "," + str(aproxy.headers) + '\n')
+
 
 
 def processinputparams(argv):
@@ -126,7 +130,7 @@ def getresponse(request, url_timeout):
         #    print("Error: " + err.reason)
 
     except (urllib.request.HTTPError,
-            socket.error, http.client.HTTPException):
+            socket.error, http.client.HTTPException, UnicodeDecodeError, ConnectionResetError):
 
         # ignore the usual errors related to bad proxies like connectivity
         # timeouts, refused connections, HTTPError, URLError, etc
@@ -152,14 +156,30 @@ def analyzeheaders(args, headers_json):
     # source IP by advertize themselves as being proxies. Anything else
     # can be classified as an Elite proxy that shows neither the info
     # about the source or that it is a proxy.
-    if args.wanip + ":" + str(args.port) in header_values:
-        proxy_type = "Transparent"
-    elif bool([key for key in header_keys if "FORWARD" in key.upper()
-                                             or "VIA" in key.upper()
-                                             or "PROXY" in key.upper()]):
+    proxy_type = "Transparent"
+
+    if(args.wanip not in header_values):
         proxy_type = "Anonymous"
-    else:
-        proxy_type = "Elite"
+
+        anonIntersect = set(header_keys).intersection([
+        'X-REAL-IP',
+        'X-FORWARDED-FOR',
+        'X-PROXY-ID',
+        'VIA',
+        'FORWARDED-FOR',
+        'X-FORWARDED',
+        'HTTP-FORWARDED',
+        'CLIENT-IP',
+        'FORWARDED-FOR-IP',
+        'FORWARDED_FOR',
+        'X_FORWARDED FORWARDED',
+        'CLIENT_IP',
+        'PROXY-CONNECTION',
+        'XROXY-CONNECTION',
+        'X-IMForwards'])
+
+        if(len(anonIntersect) == 0):
+            proxy_type = "Elite"
 
     return proxy_type
 
@@ -180,8 +200,14 @@ def test_proxy(args, allproxies, good_proxies):
 
     while True:
 
+        if(allproxies.empty()):
+            return
+
         # .get() locks the Queue to be thread safe and blocks until an item is available
         proxytotest = allproxies.get()
+        # release the queue containing a list of proxies to test
+        # this prevents multiple threads from re-testing same proxies
+        allproxies.task_done()
 
         start = time.time()
 
@@ -193,34 +219,19 @@ def test_proxy(args, allproxies, good_proxies):
 
             headers_json = json.loads(response)
 
-        except (TypeError, json.JSONDecodeError):
-            continue
+            proxy_type = analyzeheaders(args, headers_json)
 
-        proxy_type = analyzeheaders(args, headers_json)
-
-        print(
-            "{0: <21} {1: <12} {2:>5.1f}s  {3}".format(proxytotest,
+            print(
+            "{0: <35} {1: <12} {2:>5.1f}s  {3}".format("Thread-" + str(threading.get_ident()) + " " + proxytotest,
                                                        proxy_type,
                                                        time.time() -
                                                        start,
                                                        headers_json))
 
-        # save the proxy and analysis results to a list
-        # threading.Lock() is used to prevent multiple threads from
-        # corrupting this list as its a shared resource
-        # with lock:
+            good_proxies.append(AProxy(proxytotest, proxy_type, time.time()-start,headers_json))
 
-        good_proxies.append(
-            "{0},{1},{2:.1f},{3}".format(
-                proxytotest,
-                proxy_type,
-                time.time() -
-                start,
-                headers_json))
-
-        # release the queue containing a list of proxies to test
-        # this prevents multiple threads from re-testing same proxies
-        allproxies.task_done()
+        except (TypeError, json.JSONDecodeError):
+            continue
 
 
 def main(argv):
